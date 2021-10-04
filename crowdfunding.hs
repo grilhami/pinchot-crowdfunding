@@ -1,16 +1,3 @@
--- This is a starter contract, based on the Game contract,
--- containing the bare minimum required scaffolding.
---
--- What you should change to something more suitable for
--- your use case:
---   * The MyDatum type
---   * The MyRedeemer type
---
--- And add function implementations (and rename them to
--- something suitable) for the endpoints:
---   * publish
---   * redeem
-
 import           Control.Applicative  (Applicative (pure))
 import           Data.Maybe           (catMaybes)
 import           Data.Map             (Map)
@@ -33,10 +20,7 @@ import           PlutusTx.Prelude     hiding (Applicative (..))
 import qualified Plutus.Contract.Typed.Tx as Typed
 import qualified Prelude              as Haskell
 
--- | These are the data script and redeemer types. We are using an integer
---   value for both, but you should define your own types.
--- newtype MyDatum = MyDatum Integer deriving newtype (PlutusTx.ToData, PlutusTx.FromData, PlutusTx.UnsafeFromData)
-
+-- | Campaign Datum that will be included in the transaction
 data CampaignDatum = 
             CampaignDatum 
             {
@@ -46,10 +30,10 @@ data CampaignDatum =
             ,   campaignGoal :: Value
             } deriving (Generic, ToJSON, FromJSON, ToSchema)
 
--- PlutusTx.makeLift ''MyDatum
 PlutusTx.unstableMakeIsData ''CampaignDatum
 PlutusTx.makeLift ''CampaignDatum
 
+-- | Campaign params for "create campaign" endpoint
 data CampaignParams = 
                 CampaignParams 
                 {
@@ -60,6 +44,7 @@ data CampaignParams =
                 } deriving stock (Haskell.Eq, Haskell.Show, Generic)
                   deriving anyclass (FromJSON, ToJSON, ToSchema)
 
+-- | Contribute params for "contribute" endpoint
 data ContributeParams = 
                 ContributeParams 
                 {
@@ -67,26 +52,20 @@ data ContributeParams =
                 ,   value :: Value
                 } deriving stock (Haskell.Eq, Haskell.Show, Generic)
                   deriving anyclass (FromJSON, ToJSON, ToSchema)
-
+-- | Crowdfunding validator type
 data Crowdfunding
 instance Scripts.ValidatorTypes Crowdfunding where
     type instance RedeemerType Crowdfunding = ()
     type instance DatumType Crowdfunding = CampaignDatum
 
+-- | Compile validator
 mkValidator :: Scripts.TypedValidator Crowdfunding
 mkValidator = Scripts.mkTypedValidator @Crowdfunding
     $$(PlutusTx.compile [|| validate ||])
     $$(PlutusTx.compile [|| wrap ||]) where
         wrap = Scripts.wrapValidator @CampaignDatum
 
-
--- newtype MyRedeemer = MyRedeemer Integer deriving newtype (PlutusTx.ToData, PlutusTx.FromData, PlutusTx.UnsafeFromData)
--- PlutusTx.makeLift ''MyRedeemer
-
--- | This method is the spending validator (which gets lifted to
---   its on-chain representation).
--- validateSpend :: MyDatum -> MyRedeemer -> ScriptContext -> Bool
--- validateSpend _myDataValue _myRedeemerValue _ = error () -- Please provide an implementation.
+-- | Validator to check if transaction is submitted after campaign deadline (Refund and Withdrawal)
 
 validate :: CampaignDatum -> () -> ScriptContext -> Bool
 validate cmp _ sc = 
@@ -98,23 +77,7 @@ validate cmp _ sc =
 contractAddress :: Address
 contractAddress = Scripts.validatorAddress mkValidator
 
--- data Starter
--- instance Scripts.ValidatorTypes Starter where
---     type instance RedeemerType Starter = MyRedeemer
---     type instance DatumType Starter = MyDatum
-
--- | The script instance is the compiled validator (ready to go onto the chain)
--- starterInstance :: Scripts.TypedValidator Starter
--- starterInstance = Scripts.mkTypedValidator @Starter
---     $$(PlutusTx.compile [|| validateSpend ||])
---     $$(PlutusTx.compile [|| wrap ||]) where
---         wrap = Scripts.wrapValidator @MyDatum @MyRedeemer
-
--- | The schema of the contract, with two endpoints.
--- type Schema =
---         Endpoint "publish" (Integer, Value)
---         .\/ Endpoint "redeem" Integer
-
+-- | Schema for endpoints: "create campaign" and "contribute"
 type CrowdfundingSchema = 
             Endpoint "create campaign" CampaignParams
             .\/ Endpoint "contribute" ContributeParams
@@ -122,6 +85,7 @@ type CrowdfundingSchema =
 contract :: AsContractError e => Contract () CrowdfundingSchema e ()
 contract = selectList [createCampaign, contribute]
 
+-- | Implement "create campaign" endpoint
 createCampaign :: AsContractError e => Promise () CrowdfundingSchema e ()
 createCampaign = endpoint @"create campaign" $ \CampaignParams{..} -> do
     ckh <- pubKeyHash <$> ownPubKey
@@ -134,6 +98,8 @@ createCampaign = endpoint @"create campaign" $ \CampaignParams{..} -> do
                 campaignOwner = ckh
             }
         tx = Constraints.mustPayToTheScript c stake
+        
+    -- | Submit Campaign as transaction 
     txid <- fmap Ledger.txId (submitTxConstraints mkValidator tx)
 
     logInfo @Haskell.String "WAITING FOR THE CAMPAIGN DEADLINE ..."
